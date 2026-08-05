@@ -461,7 +461,7 @@ namespace loader
             }
         }
 
-        // Sort drivers in ascending order of driver type unless ZE_ENABLE_PCI_ID_DEVICE_ORDER, then in decending order with MIXED and OTHER at the end.
+        // Sort drivers in ascending order of driver type unless ZE_ENABLE_PCI_ID_DEVICE_ORDER, then in descending order with MIXED and OTHER at the end.
         std::sort(drivers->begin(), drivers->end(), driverSortComparator);
 
         if (debugTraceEnabled) {
