@@ -76,6 +76,10 @@ namespace loader
         ze_result_t zetddiInitResult = ZE_RESULT_ERROR_UNINITIALIZED;
         ze_result_t zesddiInitResult = ZE_RESULT_ERROR_UNINITIALIZED;
         ze_result_t zerddiInitResult = ZE_RESULT_ERROR_UNINITIALIZED;
+
+        // Resolved gate hook; null = driver doesn't support extension tracing.
+        zel_pfnDriverEnableTracing_t pfnDriverEnableTracing = nullptr;
+        bool driverEnableTracingResolved = false;
     };
 
     using driver_vector_t = std::vector< driver_t >;
@@ -132,6 +136,7 @@ namespace loader
         bool debugTraceAdvanced = false;  // true when ZE_ENABLE_LOADER_DEBUG_TRACE=2 or ZEL_ENABLE_LOADER_LOGGING=2
         bool driverDDIPathDefault = false;
         bool tracingLayerEnabled = false;
+        std::atomic<bool> anyExtensionCallbackRegistered{false};
         std::once_flag coreDriverSortOnce;
         std::once_flag sysmanDriverSortOnce;
         std::atomic<bool> sortingInProgress = {false};
@@ -146,4 +151,7 @@ namespace loader
     extern ze_handle_t* loaderDispatch;
     extern zer_dditable_t* defaultZerDdiTable;
     extern context_t *context;
+
+    // Toggles one driver's "zelDriverEnableTracing" gate; UNSUPPORTED if absent.
+    ze_result_t enableDriverExtensionTracing(driver_t &driver, ze_bool_t enable);
 }
