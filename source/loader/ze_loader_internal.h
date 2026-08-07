@@ -67,6 +67,16 @@ namespace loader
         ze_result_t zetddiInitResult = ZE_RESULT_ERROR_UNINITIALIZED;
         ze_result_t zesddiInitResult = ZE_RESULT_ERROR_UNINITIALIZED;
         ze_result_t zerddiInitResult = ZE_RESULT_ERROR_UNINITIALIZED;
+        // This driver's "zelDriverEnableTracing" gate hook, resolved once at
+        // driver-init time. A null pointer means the driver does not support
+        // extension-function tracing, so every runtime enable/disable toggle
+        // (which a perf tool like VTune calls frequently) is a simple null check
+        // plus a call - no by-name GetExtensionFunctionAddress lookup on the hot
+        // path. driverEnableTracingResolved guards the one-time capability probe:
+        // init_driver can run more than once per driver, and the probe call
+        // mutates the gate, so it must fire exactly once (before any real enable).
+        zel_pfnDriverEnableTracing_t pfnDriverEnableTracing = nullptr;
+        bool driverEnableTracingResolved = false;
     };
 
     using driver_vector_t = std::vector< driver_t >;
@@ -170,6 +180,11 @@ namespace loader
         bool debugTraceAdvanced = false;  // true when ZE_ENABLE_LOADER_DEBUG_TRACE=2 or ZEL_ENABLE_LOADER_LOGGING=2
         bool driverDDIPathDefault = false;
         bool tracingLayerEnabled = false;
+        // Monotonic latch set on the first extension-callback registration. While
+        // false, the enable/disable toggle skips per-driver gate propagation, so
+        // the common case (no extension callbacks, e.g. VTune) stays a cheap
+        // DDI-table swap. Never reset.
+        std::atomic<bool> anyExtensionCallbackRegistered{false};
         std::once_flag coreDriverSortOnce;
         std::once_flag sysmanDriverSortOnce;
         std::atomic<bool> sortingInProgress = {false};
@@ -184,4 +199,10 @@ namespace loader
     extern ze_handle_t* loaderDispatch;
     extern zer_dditable_t* defaultZerDdiTable;
     extern context_t *context;
+
+    // Enable/disable extension-function tracing on a single driver by resolving
+    // its "zelDriverEnableTracing" hook by name. No-op (returns UNSUPPORTED) for
+    // drivers that don't implement it. Used to propagate the tracing-layer
+    // enable/disable state (env + dynamic) down to each driver.
+    ze_result_t enableDriverExtensionTracing(driver_t &driver, ze_bool_t enable);
 }

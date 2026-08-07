@@ -13,6 +13,7 @@
 #endif
 
 #include "../ze_api.h"
+#include "../layers/zel_tracing_register_cb.h"
 
 #if !defined(__cplusplus)
 #include <stdbool.h>
@@ -564,6 +565,106 @@ zelDisableTracingLayer(void);
  */
 ZE_DLLEXPORT ze_result_t ZE_APICALL
 zelGetTracingLayerState(bool* enabled); // Pointer to bool to receive tracing layer state
+
+///////////////////////////////////////////////////////////////////////////////
+/// @brief Callback signature for extension-function prologue/epilogue handlers.
+///
+/// This intentionally mirrors the established per-API tracing callback shape
+/// (see the ze_pfnXCb_t typedefs in ze_api.h) so tools can reuse their existing
+/// callback infrastructure. Because an arbitrary extension function has no
+/// generated params struct, @p pParams is passed as an opaque void* whose layout
+/// is defined by the driver for the named function (may be null for pure-vendor
+/// functions). The identity of the fired function is carried via
+/// @p pTracerUserData (set at registration time).
+///
+/// @param[in] pParams                    driver-populated parameter block (opaque)
+/// @param[in] result                     epilogue only: the function's return value
+/// @param[in] pTracerUserData            per-registration user data
+/// @param[in,out] ppTracerInstanceUserData  per-call scratch for prologue->epilogue handoff
+typedef void (ZE_APICALL *zel_pfnDriverExtensionFunctionCb_t)(
+    void* pParams,
+    ze_result_t result,
+    void* pTracerUserData,
+    void** ppTracerInstanceUserData
+    );
+
+///////////////////////////////////////////////////////////////////////////////
+/// @brief Signature of the per-driver hook that enables or disables the driver's
+///        extension-function callbacks.
+///
+/// A driver that supports extension-function tracing exposes this by name
+/// ("zelDriverEnableTracing") via zeDriverGetExtensionFunctionAddress. The loader
+/// calls it on each active driver when the tracing layer is enabled/disabled
+/// (including static ZE_ENABLE_TRACING_LAYER enablement and late-loaded drivers).
+/// When disabled, the driver must not invoke any registered prologue/epilogue.
+typedef ze_result_t (ZE_APICALL *zel_pfnDriverEnableTracing_t)(
+    ze_driver_handle_t hDriver,
+    ze_bool_t enable
+    );
+
+///////////////////////////////////////////////////////////////////////////////
+/// @brief Signature of the per-driver hook the loader/tracing-layer uses to
+///        install its extension-function interception wrappers on a driver.
+///
+/// A driver that supports extension-function tracing exposes this by name
+/// ("zelDriverSetLoaderCallbackForExtension") via
+/// zeDriverGetExtensionFunctionAddress. The tracing layer calls it to register a
+/// single loader-owned prologue/epilogue wrapper (plus an opaque loader context)
+/// for the named extension function. The driver invokes @p loaderPrologue before,
+/// and @p loaderEpilogue after, the body of the extension function named
+/// @p functionName, forwarding @p pLoaderContext back unchanged. Passing null for
+/// both wrappers unregisters. The loader owns the fan-out to any number of
+/// registered tracers, so the driver stores at most one wrapper per function.
+typedef ze_result_t (ZE_APICALL *zel_pfnDriverSetLoaderCallbackForExtension_t)(
+    ze_driver_handle_t hDriver,                      // [in] handle of the driver instance
+    const char* functionName,                        // [in] extension function name to intercept
+    zel_pfnDriverExtensionFunctionCb_t loaderPrologue, // [in][optional] loader prologue wrapper
+    zel_pfnDriverExtensionFunctionCb_t loaderEpilogue, // [in][optional] loader epilogue wrapper
+    void* pLoaderContext                             // [in][optional] loader context echoed to wrappers
+    );
+
+///////////////////////////////////////////////////////////////////////////////
+/// @brief Registers a prologue or epilogue callback on a tracer for a named
+///        extension function of a specific driver.
+///
+/// Extension functions obtained by string name via
+/// zeDriverGetExtensionFunctionAddress() return a raw driver pointer that the
+/// application calls directly, bypassing the loader and therefore the per-API
+/// tracing interceptors. This API routes such functions through the same tracer
+/// (::zel_tracer_handle_t) infrastructure used for core APIs: the tracing layer
+/// installs a loader-owned wrapper on @p hDriver (via the driver's
+/// zelDriverSetLoaderCallbackForExtension hook) and fans out to every enabled
+/// tracer that registered @p functionName for @p hDriver.
+///
+/// Registration is keyed by (@p hDriver, @p functionName) and is order-independent
+/// relative to zeDriverGetExtensionFunctionAddress() — it takes effect on the next
+/// invocation even if the application already cached the function pointer. The
+/// callback receives the tracer's pUserData (from ::zelTracerCreate) as
+/// pTracerUserData. Multiple tracers may register the same function to stack
+/// callbacks. The callbacks fire only when the tracing layer is enabled for the
+/// driver and the tracer is enabled.
+///
+/// @param[in] hTracer        handle of the tracer to register the callback on
+/// @param[in] hDriver        handle of the driver whose extension function to trace
+/// @param[in] functionName   name of the extension function to intercept
+/// @param[in] callback_type  ::ZEL_REGISTER_PROLOGUE or ::ZEL_REGISTER_EPILOGUE
+/// @param[in] pCallback      handler to register (null clears that slot)
+///
+/// @return
+///   - ZE_RESULT_SUCCESS on success (including clearing a slot).
+///   - ZE_RESULT_ERROR_UNINITIALIZED if the loader/tracing layer is not initialized.
+///   - ZE_RESULT_ERROR_UNSUPPORTED_FEATURE if the driver does not implement the hook.
+///   - ZE_RESULT_ERROR_INVALID_NULL_HANDLE if @p hTracer or @p hDriver is null.
+///   - ZE_RESULT_ERROR_INVALID_NULL_POINTER if @p functionName is null.
+///   - ZE_RESULT_ERROR_INVALID_ARGUMENT if the tracer is not in the disabled state.
+ZE_DLLEXPORT ze_result_t ZE_APICALL
+zelTracerDriverExtensionRegisterCallback(
+    zel_tracer_handle_t hTracer,                     // [in] handle of the tracer
+    ze_driver_handle_t hDriver,                      // [in] handle of the driver instance
+    const char* functionName,                        // [in] extension function name to intercept
+    zel_tracer_reg_t callback_type,                  // [in] prologue or epilogue
+    zel_pfnDriverExtensionFunctionCb_t pCallback     // [in][optional] handler (null clears slot)
+    );
 
 #if defined(__cplusplus)
 } // extern "C"
